@@ -4,7 +4,7 @@
 
 ## What this is
 
-A decision-intelligence pipeline over three real datasets: it predicts yield risk from real semiconductor process-sensor data, classifies real wafer defect-map images with a CNN, models the real fab's capacity and bottleneck, simulates it stochastically under different dispatch/release policies, and optimizes weekly lot release with three Gurobi MILPs against real order-demand data.
+A decision-intelligence pipeline over three real datasets: it predicts yield risk from real semiconductor process-sensor data, classifies real wafer defect-map images with a CNN, models the real fab's capacity and bottleneck, simulates it stochastically under different dispatch/release policies, and optimizes weekly lot release with three Gurobi MILPs against real order-demand data. The pipeline stages aren't independent demos on one dashboard: the real SECOM yield rate feeds into the capacity plan as a planning parameter, the real WM-811K defect distribution is mapped onto a distinct "quality risk" station separate from the capacity bottleneck, and the same real fab is compared under two published demand-concentration archetypes -- see "Cross-pipeline integration" below.
 
 ```text
 REAL FAB SENSOR DATA (SECOM: 1567 lots, 590 sensors, real pass/fail)
@@ -41,7 +41,16 @@ tools), minimizing weighted tardiness -- the tractable exact complement to
 full-fab scheduling, which is combinatorially intractable at real scale
 (~180K variables) and is why fab_twin.py's simulation exists instead
                 ↓
-EXPLAINABLE RECOMMENDATION — evidence-labeled per-scenario brief
+CROSS-PIPELINE INTEGRATION — real SECOM yield rate as a capacity-plan
+parameter (yield-adjusted backlog); real WM-811K defect distribution mapped
+to a "quality risk" station distinct from the capacity bottleneck
+                ↓
+ARCHETYPE COMPARISON — the same real fab (same 106 tools) under two real
+published demand-concentration scenarios (LVHM: 10 products: HVLM: 2) --
+same total demand, different congestion outcome
+                ↓
+EXPLAINABLE RECOMMENDATION — evidence-labeled per-scenario brief, plus one
+headline decision-intelligence summary synthesizing every stage above
 ```
 
 Run it: double-click `RUN_DEMO.cmd` (builds the React frontend on first run if needed, then starts the API server), or `docker compose up --build` (multi-stage build: Node builds the frontend, then it's copied into the Python image). First load takes ~30-90s while the server pre-computes all four Quick Scenarios (across all 10 real products) plus the two large MILPs in the background; the workspace opens at `http://127.0.0.1:8020`, with a dedicated methodology page at `/methodology`. See `DEPLOYMENT.md` for details.
@@ -49,7 +58,7 @@ Run it: double-click `RUN_DEMO.cmd` (builds the React frontend on first run if n
 ## The data
 
 - **SECOM** (UCI ML Repository #179) — 1567 real production lots from a live semiconductor fab, 590 real anonymized process-sensor signals per lot, real pass/fail line-test outcome, real timestamps. `data/secom.data` / `data/secom_labels.data`.
-- **SMT2020** (Kopp, Hassoun, Kalir & Mönch, *IEEE Trans. Semiconductor Manufacturing*, 2020) — the standard published academic benchmark for reentrant wafer-fab simulation research (successor to the classic MIMAC benchmark family). **All 10 real products** from the LVHM (Low-Volume-High-Mix) archetype fab are modeled, each with its own real route (300-500+ reentrant process steps), real tool-group counts, real MTBF/MTTR reliability data, and real order/demand rates. Official distribution: <https://p2schedgen.fernuni-hagen.de/index.php/downloads/simulation>. Obtained here via the open research artifact `PySCFabSim-revised` (Zenodo record 15088815). See `data/smt2020_lvhm/ATTRIBUTION.md`.
+- **SMT2020** (Kopp, Hassoun, Kalir & Mönch, *IEEE Trans. Semiconductor Manufacturing*, 2020) — the standard published academic benchmark for reentrant wafer-fab simulation research (successor to the classic MIMAC benchmark family), published in four real archetype configurations; this app uses two. **LVHM** (Low-Volume-High-Mix, used everywhere else in this app): **all 10 real products**, each with its own real route (300-500+ reentrant process steps), real tool-group counts, real MTBF/MTTR reliability data, and real order/demand rates. **HVLM** (High-Volume-Low-Mix, used in the archetype comparison): 2 real products, sharing LVHM's exact real 106-tool inventory and reusing two of its real route files verbatim -- the real difference is demand concentration. Official distribution: <https://p2schedgen.fernuni-hagen.de/index.php/downloads/simulation>. Obtained here via the open research artifact `PySCFabSim-revised` (github.com/david-dd/PySCFabSim-revised, mirroring Zenodo record 15088815). See `data/smt2020_lvhm/ATTRIBUTION.md` and `data/smt2020_hvlm/ATTRIBUTION.md`.
 - **WM-811K** (Wu, Jang & Chen, *IEEE Trans. Semiconductor Manufacturing*, 2015) — 811,457 real wafer maps from 46,293 real production lots, 172,950 of them human-labeled into 9 real classes (8 defect patterns + "none"). Not bundled in this repo (~2.1GB) -- download `LSWMD.pkl` yourself from Kaggle and place it at `data/wm811k/LSWMD.pkl`; see `data/wm811k/ATTRIBUTION.md`. Training is a separate one-time step (`scripts/train_wafer_cnn.py`, ~15 min on CPU) -- the live app only ever loads the trained model's saved metrics, never trains on request.
 
 ## What this is not
@@ -59,6 +68,7 @@ Run it: double-click `RUN_DEMO.cmd` (builds the React frontend on first run if n
 - The Gurobi release-mix optimization uses a minimum-fill-rate floor (default 2% of real weekly demand per product, across all 10 products) to model a plausible contractual service commitment — real demand in this benchmark (~390 lots/week across 10 products) vastly exceeds what the real bottleneck (Diffusion, 10 furnaces) can supply, so the floor is what forces a realistic multi-product mix instead of a degenerate single-product solution. This assumption is explicit in `pipeline/release_optimizer.py`, not hidden.
 - The SimPy simulation's steady-state metrics (mean/P95 cycle time) are reported over a fixed 30-day window with a 3-day warm-up; under an overloaded scenario (utilization > 1) the queue is genuinely unstable, so these numbers are a transient snapshot, not a converged steady state. The Kingman queueing approximation is standard textbook theory (VUT equation), not fit to any data.
 - The wafer defect CNN's training split is a stratified 80/10/10 cut this app makes itself, not WM-811K's own `trianTestLabel` field -- that field is real but isn't class-stratified and skews ~69% Test / 31% Training. The training set also caps the dominant "none" class to 25,000 of its real 117,944 examples (every other class keeps every real example) so training time is tractable on CPU; validation/test are never rebalanced. Both choices are explicit in `pipeline/wafer_data.py` and `pipeline/wafer_cnn.py`.
+- SECOM and this SMT2020 fab are **different real fabs** -- `pipeline/capacity_plan.py`'s `yield_rate` parameter uses SECOM's real calibrated yield rate as a representative planning assumption inside the SMT2020 capacity plan, not a claim they're the same line. `pipeline/quality_risk.py`'s defect-to-station mapping is a stated heuristic from yield-engineering practice, not derived co-occurrence data between the two datasets. Both boundaries are stated explicitly in each module's docstring and on the Methodology page, not hidden.
 
 ## Project layout
 
@@ -75,10 +85,19 @@ pipeline/
                           bottlenecks (Diffusion, Dry_Etch) -- tractable complement to full-fab scheduling
   scenarios.py             Composes the above into 4 named Quick Scenarios + recommendation text
   wafer_data.py             Real WM-811K loading (incl. a Python-2/old-pandas pickle compat shim),
-                          resize/encode, class-stratified split
+                          resize/encode, class-stratified split (shared by wafer_cnn + wafer_baseline)
   wafer_cnn.py              PyTorch CNN + training loop + evaluation (macro-F1, per-class
-                          precision/recall, confusion matrix) -- train-once-serve-many
-scripts/train_wafer_cnn.py One-time training run for wafer_cnn.py (not run at server startup)
+                          precision/recall, confusion matrix, real Grad-CAM) -- train-once-serve-many
+  wafer_baseline.py          Hand-engineered-feature RandomForest baseline, same real split as the
+                          CNN -- a genuine "does the CNN earn its complexity" comparison
+  archetype_comparison.py   Real LVHM vs HVLM fab-archetype comparison (same tools, different
+                          demand concentration) at matched total release rate
+  quality_risk.py            Maps real WM-811K defect-type distribution onto SMT2020 station groups
+                          (stated heuristic mapping) -- a "quality risk" lens distinct from capacity
+  impact_summary.py          One headline synthesis composed from every other stage's real output --
+                          no new fabricated math, just honest composition (see its module docstring)
+scripts/train_wafer_cnn.py One-time training run for wafer_cnn.py + wafer_baseline.py (not run at
+                          server startup)
 api/main.py               FastAPI backend: structured logging, request-timing middleware,
                           liveness (/api/health) vs readiness (/api/status), pre-warms at startup
 api/db.py                 SQLAlchemy models + engine (SQLite locally, Postgres in Docker via
@@ -89,16 +108,23 @@ alembic/, alembic.ini     Schema migrations for api/db.py's models (run automati
 frontend/                 React (Vite) UI -- api/main.py serves the built frontend/dist/, mounting
                           /assets and falling back to index.html for client-side routes so
                           React Router's /methodology page works on direct navigation/refresh
-  src/pages/Workspace.jsx   The live dashboard: hero stats, pipeline diagram, scenario nav,
-                          What-If panel (client-side recompute), all 9 result cards
+  src/pages/Workspace.jsx   The live dashboard: impact-summary banner, hero stats, pipeline
+                          diagram, scenario nav, What-If panel (client-side recompute), 11 result cards
   src/pages/Methodology.jsx Dedicated methodology page -- what's real, what's modeled, and why
-  src/components/           One component per card/chart (BarRow, SvgLineChart, SPCChart, etc.)
+  src/components/           One component per card/chart (BarRow, SvgLineChart, SPCChart, WaferGrid
+                          with its real Grad-CAM overlay, IntegrationCard, ArchetypeComparisonCard, etc.)
 tests/                    Unit tests for the deterministic math + FastAPI integration tests
-data/                     SECOM + SMT2020 raw files (see ATTRIBUTION.md); data/wm811k/ (gitignored,
-                          not bundled -- WM-811K raw file + trained CNN artifacts go here)
+data/                     SECOM + SMT2020 LVHM + SMT2020 HVLM raw files (see each ATTRIBUTION.md);
+                          data/wm811k/ (gitignored, not bundled -- WM-811K raw file + trained
+                          CNN/baseline artifacts go here)
 Dockerfile, docker-compose.yml   Containerized run: app + Postgres (see DEPLOYMENT.md)
+render.yaml                       Render Blueprint: single Docker web service from the same Dockerfile
+                                  (undeployed -- see DEPLOYMENT.md's "Render" section)
 .github/workflows/tests.yml      CI: runs the full test suite on every push/PR
 LICENSE, SECURITY.md, DEPLOYMENT.md
+docs/METHODOLOGY.md               The pipeline's math/stats in more depth than the table above --
+                                  Little's Law/Kingman derivations, the yield-risk CV methodology,
+                                  the MILP formulations, straight from the modules' own docstrings
 ```
 
 ## Testing & CI

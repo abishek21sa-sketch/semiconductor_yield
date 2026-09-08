@@ -33,9 +33,14 @@ COPY --from=frontend-build /app/frontend/dist/ frontend/dist/
 
 EXPOSE 8020
 
+# PORT is read from the environment, defaulting to 8020: docker-compose.yml
+# and a bare `docker run` never set it, so local behavior is unchanged, but
+# a host that injects its own port at container start (e.g. Render sets
+# $PORT) is respected without needing a different image -- see render.yaml.
+
 # start-period is long because the app pre-warms the full real-data pipeline
 # (yield model + all 4 scenarios: SimPy Monte Carlo + Gurobi) on startup.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8020/api/health')" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://localhost:' + os.environ.get('PORT', '8020') + '/api/health')" || exit 1
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8020"]
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8020}"]

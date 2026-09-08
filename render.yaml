@@ -1,0 +1,54 @@
+# Render Blueprint for this app -- one Docker web service built from the
+# existing multi-stage Dockerfile (Node builds the React frontend, then only
+# its dist/ output is copied into the final Python image; see Dockerfile).
+#
+# This file only DESCRIBES the service; it does not deploy anything by
+# itself. To actually deploy: push this repo to GitHub/GitLab, then in the
+# Render dashboard use "New +" -> "Blueprint" and point it at the repo (Render
+# reads this file automatically), or "New +" -> "Web Service" and pick
+# "Docker" manually and ignore this file. Nobody has run this against a real
+# Render account as part of this change -- no deploy credentials were used.
+#
+# Render injects its own $PORT env var into the container at start time; the
+# Dockerfile's CMD reads it (falling back to 8020 when $PORT is unset, which
+# is what happens for a local `docker build`/`docker run` or docker-compose,
+# so nothing about the local/Docker workflow in DEPLOYMENT.md changes).
+#
+# Gurobi-licensed features have no license on a free Render deploy, exactly
+# like a local run with no gurobi.lic: pipeline/capacity_plan.py's
+# multi-period plan and pipeline/bottleneck_scheduler.py's dispatch scheduler
+# both build MILPs past Gurobi's bundled free-tier size limit and will report
+# {"status": "license_required", "n_variables": ..., ...} instead of crashing
+# -- see DEPLOYMENT.md's "Render" section for the same graceful-degradation
+# contract already documented for local/Docker use.
+services:
+  - type: web
+    name: fab-yield-capacity-app
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      # Unset (default): SQLite on the container's own ephemeral filesystem
+      # -- works out of the box, same as a bare `docker run`, but Render's
+      # free plan has no persistent disk, so /api/history resets on every
+      # redeploy or restart. Point this at a real Postgres connection string
+      # (Render's own managed Postgres, or any external one) if run history
+      # needs to survive restarts -- same SQLAlchemy models/Alembic
+      # migrations run against either backend, no code change needed.
+      - key: DATABASE_URL
+        sync: false
+      # Unset (default): every /api/* route is open, no auth -- fine for a
+      # portfolio demo. Set a real value to require a matching X-API-Key
+      # header on every request; see SECURITY.md and api/auth.py.
+      - key: API_KEY
+        sync: false
+      # Unset (default): Gurobi falls back to its bundled size-limited free
+      # tier (2000 vars/constraints) -- see the module note above. There is
+      # no mounted-volume equivalent of docker-compose.yml's gurobi.lic
+      # mount on Render's free plan; a real license would need Render's
+      # paid "Secret Files" feature or a Gurobi Cloud/token-based license
+      # instead of a mounted file.
+      - key: GRB_LICENSE_FILE
+        sync: false

@@ -81,3 +81,22 @@ def test_small_snapshot_solves_fast():
     if r["status"] != "optimal":
         return
     assert r["solve_time_sec"] < 15
+
+
+def test_batch_formation_reports_infeasible_below_real_minimum_batch_size():
+    """Edge-case load: a single real lot (PIECES_PER_LOT=25) is far below
+    route 1's real Diffusion batch_min (75, from data/smt2020_lvhm/
+    route_1.txt) and there is no second lot to pool with. The batch-
+    formation MILP must report this as genuinely infeasible (no batch built,
+    ok=False) rather than either crashing or fabricating an under-sized
+    batch that violates the real BATCHMN constraint -- this MILP is small
+    enough (a handful of variables) to always actually solve regardless of
+    a Gurobi license, so unlike the other bottleneck_scheduler tests there
+    is no license_required branch to accept here."""
+    diffusion_jobs, _ = bs.build_snapshot([1], lots_per_product=1, seed=11)
+    assert len(diffusion_jobs) == 1
+    assert diffusion_jobs[0]["pieces"] < diffusion_jobs[0]["batch_min"]
+
+    batches, ok = bs._form_diffusion_batches(diffusion_jobs, max_slots=3)
+    assert ok is False
+    assert batches == []
