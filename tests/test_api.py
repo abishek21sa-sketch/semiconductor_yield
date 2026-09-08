@@ -149,6 +149,21 @@ def test_bottleneck_dispatch_shape(client):
         assert body["n_dryetch_jobs"] > 0
 
 
+def test_wafer_defects_shape(client):
+    # "trained" wherever scripts/train_wafer_cnn.py has been run (needs the
+    # ~2GB WM-811K raw file, not in git); "not_trained" everywhere else
+    # (e.g. CI, or a fresh clone) -- same graceful-degradation contract as
+    # the license-gated MILPs.
+    r = client.get("/api/wafer_defects")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] in ("trained", "not_trained")
+    if body["status"] == "trained":
+        assert body["n_labeled_total"] == 172950
+        assert len(body["classes"]) == 9
+        assert 0 <= body["test_macro_f1"] <= 1
+
+
 def test_topology_has_all_ten_real_products(client):
     r = client.get("/api/topology")
     assert r.status_code == 200

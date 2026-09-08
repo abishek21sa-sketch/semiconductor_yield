@@ -4,7 +4,7 @@
 
 ## What this is
 
-A decision-intelligence pipeline over two real datasets: it predicts yield risk from real semiconductor process-sensor data, models the real fab's capacity and bottleneck, simulates it stochastically under different dispatch/release policies, and optimizes weekly lot release with a Gurobi MILP against real order-demand data.
+A decision-intelligence pipeline over three real datasets: it predicts yield risk from real semiconductor process-sensor data, classifies real wafer defect-map images with a CNN, models the real fab's capacity and bottleneck, simulates it stochastically under different dispatch/release policies, and optimizes weekly lot release with three Gurobi MILPs against real order-demand data.
 
 ```text
 REAL FAB SENSOR DATA (SECOM: 1567 lots, 590 sensors, real pass/fail)
@@ -13,6 +13,10 @@ YIELD-RISK AI — calibrated Random Forest (5-fold CV, out-of-fold, no leakage)
 + classical semiconductor yield theory (Poisson / Murphy / Negative-Binomial)
                 ↓
 SPC PROCESS MONITORING — 3-sigma band on the top failure-driving sensor
+                ↓
+WAFER DEFECT PATTERN CNN — real WM-811K wafer maps (172,950 human-labeled
+real wafers, 9 classes) -- PyTorch CNN, class-weighted loss against the real
+~1000:1 imbalance, macro-F1/per-class precision-recall, not raw accuracy
                 ↓
 REENTRANT FAB DIGITAL TWIN — topology from the published SMT2020 benchmark
 (photo/etch/diffusion/CMP reentrant loop, real tool counts, real MTBF/MTTR)
@@ -46,6 +50,7 @@ Run it: double-click `RUN_DEMO.cmd` (builds the React frontend on first run if n
 
 - **SECOM** (UCI ML Repository #179) — 1567 real production lots from a live semiconductor fab, 590 real anonymized process-sensor signals per lot, real pass/fail line-test outcome, real timestamps. `data/secom.data` / `data/secom_labels.data`.
 - **SMT2020** (Kopp, Hassoun, Kalir & Mönch, *IEEE Trans. Semiconductor Manufacturing*, 2020) — the standard published academic benchmark for reentrant wafer-fab simulation research (successor to the classic MIMAC benchmark family). **All 10 real products** from the LVHM (Low-Volume-High-Mix) archetype fab are modeled, each with its own real route (300-500+ reentrant process steps), real tool-group counts, real MTBF/MTTR reliability data, and real order/demand rates. Official distribution: <https://p2schedgen.fernuni-hagen.de/index.php/downloads/simulation>. Obtained here via the open research artifact `PySCFabSim-revised` (Zenodo record 15088815). See `data/smt2020_lvhm/ATTRIBUTION.md`.
+- **WM-811K** (Wu, Jang & Chen, *IEEE Trans. Semiconductor Manufacturing*, 2015) — 811,457 real wafer maps from 46,293 real production lots, 172,950 of them human-labeled into 9 real classes (8 defect patterns + "none"). Not bundled in this repo (~2.1GB) -- download `LSWMD.pkl` yourself from Kaggle and place it at `data/wm811k/LSWMD.pkl`; see `data/wm811k/ATTRIBUTION.md`. Training is a separate one-time step (`scripts/train_wafer_cnn.py`, ~15 min on CPU) -- the live app only ever loads the trained model's saved metrics, never trains on request.
 
 ## What this is not
 
@@ -53,6 +58,7 @@ Run it: double-click `RUN_DEMO.cmd` (builds the React frontend on first run if n
 - Station groups are aggregated from the benchmark's ~100 individual tool sub-families to a 12-group level (`pipeline/fab_data.py: classify_stngrp`) for tractability. This is a stated modeling choice, not the benchmark's native resolution.
 - The Gurobi release-mix optimization uses a minimum-fill-rate floor (default 2% of real weekly demand per product, across all 10 products) to model a plausible contractual service commitment — real demand in this benchmark (~390 lots/week across 10 products) vastly exceeds what the real bottleneck (Diffusion, 10 furnaces) can supply, so the floor is what forces a realistic multi-product mix instead of a degenerate single-product solution. This assumption is explicit in `pipeline/release_optimizer.py`, not hidden.
 - The SimPy simulation's steady-state metrics (mean/P95 cycle time) are reported over a fixed 30-day window with a 3-day warm-up; under an overloaded scenario (utilization > 1) the queue is genuinely unstable, so these numbers are a transient snapshot, not a converged steady state. The Kingman queueing approximation is standard textbook theory (VUT equation), not fit to any data.
+- The wafer defect CNN's training split is a stratified 80/10/10 cut this app makes itself, not WM-811K's own `trianTestLabel` field -- that field is real but isn't class-stratified and skews ~69% Test / 31% Training. The training set also caps the dominant "none" class to 25,000 of its real 117,944 examples (every other class keeps every real example) so training time is tractable on CPU; validation/test are never rebalanced. Both choices are explicit in `pipeline/wafer_data.py` and `pipeline/wafer_cnn.py`.
 
 ## Project layout
 
@@ -68,6 +74,11 @@ pipeline/
   bottleneck_scheduler.py  Exact batch-formation + parallel-machine dispatch MILP at the real
                           bottlenecks (Diffusion, Dry_Etch) -- tractable complement to full-fab scheduling
   scenarios.py             Composes the above into 4 named Quick Scenarios + recommendation text
+  wafer_data.py             Real WM-811K loading (incl. a Python-2/old-pandas pickle compat shim),
+                          resize/encode, class-stratified split
+  wafer_cnn.py              PyTorch CNN + training loop + evaluation (macro-F1, per-class
+                          precision/recall, confusion matrix) -- train-once-serve-many
+scripts/train_wafer_cnn.py One-time training run for wafer_cnn.py (not run at server startup)
 api/main.py               FastAPI backend: structured logging, request-timing middleware,
                           liveness (/api/health) vs readiness (/api/status), pre-warms at startup
 api/db.py                 SQLAlchemy models + engine (SQLite locally, Postgres in Docker via
@@ -79,11 +90,12 @@ frontend/                 React (Vite) UI -- api/main.py serves the built fronte
                           /assets and falling back to index.html for client-side routes so
                           React Router's /methodology page works on direct navigation/refresh
   src/pages/Workspace.jsx   The live dashboard: hero stats, pipeline diagram, scenario nav,
-                          What-If panel (client-side recompute), all 8 result cards
+                          What-If panel (client-side recompute), all 9 result cards
   src/pages/Methodology.jsx Dedicated methodology page -- what's real, what's modeled, and why
   src/components/           One component per card/chart (BarRow, SvgLineChart, SPCChart, etc.)
 tests/                    Unit tests for the deterministic math + FastAPI integration tests
-data/                     SECOM + SMT2020 raw files (see ATTRIBUTION.md)
+data/                     SECOM + SMT2020 raw files (see ATTRIBUTION.md); data/wm811k/ (gitignored,
+                          not bundled -- WM-811K raw file + trained CNN artifacts go here)
 Dockerfile, docker-compose.yml   Containerized run: app + Postgres (see DEPLOYMENT.md)
 .github/workflows/tests.yml      CI: runs the full test suite on every push/PR
 LICENSE, SECURITY.md, DEPLOYMENT.md
@@ -91,7 +103,7 @@ LICENSE, SECURITY.md, DEPLOYMENT.md
 
 ## Testing & CI
 
-`pytest tests/ -v` runs 38 tests: unit tests on the deterministic math (Little's Law, Kingman -- verified exact against the M/M/1 formula, classical yield theory), unit tests on the multi-period stochastic plan (backlog accounting consistency, the cumulative floor, and -- the whole point of that module -- a test that asserts it genuinely exceeds Gurobi's 2000-variable free-tier limit), unit tests on the bottleneck dispatch scheduler (no capacity violations, no jobs starting before their lots arrive, real batch-size bounds respected, tardiness actually emerges under realistic load), plus FastAPI integration tests hitting every real endpoint including `/api/history`, the React Router SPA fallback (`/methodology` served without a matching backend route), and the built JS bundle actually being reachable under `/assets` (`tests/test_api.py`). CI (`.github/workflows/tests.yml`) builds the React frontend with Node before running pytest, since `api/main.py` refuses to start without a built `frontend/dist/`. It passes unlicensed, since `release_optimizer.py`'s small MILP fits Gurobi's free tier even though `capacity_plan.py`'s and `bottleneck_scheduler.py`'s don't (CI has no Gurobi license configured, so those modules' own size-limit tests accept either `optimal` or the graceful `license_required` fallback, and only prove the solve itself when run with a real license, as it is locally).
+`pytest tests/ -v` runs 46 tests: unit tests on the deterministic math (Little's Law, Kingman -- verified exact against the M/M/1 formula, classical yield theory), unit tests on the multi-period stochastic plan (backlog accounting consistency, the cumulative floor, and -- the whole point of that module -- a test that asserts it genuinely exceeds Gurobi's 2000-variable free-tier limit), unit tests on the bottleneck dispatch scheduler (no capacity violations, no jobs starting before their lots arrive, real batch-size bounds respected, tardiness actually emerges under realistic load), unit tests on the WM-811K loading/split/encoding pipeline (`tests/test_wafer_data.py`, skipped when the ~2GB raw file isn't present locally -- e.g. in CI) and the trained-artifact loader (`tests/test_wafer_cnn.py`, runs everywhere: asserts it never trains on request and that a trained model's confusion matrix is internally consistent with its own reported per-class support), plus FastAPI integration tests hitting every real endpoint including `/api/history`, `/api/wafer_defects`, the React Router SPA fallback (`/methodology` served without a matching backend route), and the built JS bundle actually being reachable under `/assets` (`tests/test_api.py`). CI (`.github/workflows/tests.yml`) builds the React frontend with Node before running pytest, since `api/main.py` refuses to start without a built `frontend/dist/`. It passes unlicensed and without the wafer dataset, since `release_optimizer.py`'s small MILP fits Gurobi's free tier even though `capacity_plan.py`'s and `bottleneck_scheduler.py`'s don't (CI has no Gurobi license configured, so those modules' own size-limit tests accept either `optimal` or the graceful `license_required` fallback), and `/api/wafer_defects` similarly accepts `not_trained` there.
 
 ## Talking points
 

@@ -1,6 +1,6 @@
 import { fmtNum, fmtPct } from "../api.js";
 
-export default function HeroStats({ y, topo, opt }) {
+export default function HeroStats({ y, topo, opt, wafer }) {
   const meta = y.meta;
   const totalSteps = Object.values(topo.route_step_counts).reduce((a, b) => a + b, 0);
   const totalDemand = Object.values(topo.demand).reduce((a, b) => a + (b || 0), 0);
@@ -22,6 +22,9 @@ export default function HeroStats({ y, topo, opt }) {
     { v: fmtNum(totalSteps), l: "Real reentrant process steps modeled" },
     { v: "IEEE TSM 2020", l: "Published fab benchmark" },
   ];
+  if (wafer && wafer.status === "trained") {
+    tiles.push({ v: fmtNum(wafer.n_labeled_total), l: "Real labeled wafer defect images (CNN)" });
+  }
 
   return (
     <section className="hero">

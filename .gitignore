@@ -5,7 +5,10 @@ __pycache__/
 server.log
 .claude/settings.local.json
 data/secom.zip
-data/wm811k/
+data/wm811k/LSWMD.pkl
+data/wm811k/wafer_cnn_model.pt
+data/wm811k/wafer_cnn_metrics.json
+data/wm811k/wafer_cnn_samples.json
 gurobi.lic
 fab_app.db
 frontend/node_modules/

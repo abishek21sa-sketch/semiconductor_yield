@@ -4,13 +4,14 @@ import Footer from "../components/Footer.jsx";
 const ITEMS = [
   {
     num: "01 · DATA",
-    title: "Two real datasets, not one written for this app",
+    title: "Three real datasets, not one written for this app",
     body: (
       <>
-        SECOM (UCI #179): 1567 real lots, 590 real anonymized sensors, real pass/fail. SMT2020
-        (Kopp, Hassoun, Kalir &amp; Mönch, <em>IEEE TSM</em> 2020): the published academic
-        benchmark for reentrant wafer-fab simulation — real routes, real tool counts, real
-        MTBF/MTTR.
+        SECOM (UCI #179): 1567 real lots, 590 real anonymized sensors, real pass/fail. WM-811K
+        (Wu, Jang &amp; Chen, <em>IEEE TSM</em> 2015): 811,457 real wafer maps, 172,950 human-labeled
+        into 9 real classes. SMT2020 (Kopp, Hassoun, Kalir &amp; Mönch, <em>IEEE TSM</em> 2020):
+        the published academic benchmark for reentrant wafer-fab simulation — real routes, real
+        tool counts, real MTBF/MTTR.
       </>
     ),
   },
@@ -26,7 +27,28 @@ const ITEMS = [
     ),
   },
   {
-    num: "03 · QUEUEING THEORY",
+    num: "03 · WAFER DEFECT CNN",
+    title: "A real CNN, real class imbalance",
+    body: (
+      <>
+        A PyTorch CNN over all 172,950 human-labeled real WM-811K wafers (9 classes). Each real
+        wafer map is resized to a fixed 64×64 with nearest-neighbor interpolation — preserves the
+        real discrete die states (no die / pass / fail) instead of inventing fake intermediate
+        values a linear resize would. Trained with class-weighted loss against a genuine ~1000:1
+        imbalance (147,431 "none" vs 149 "Near-full"); the training split additionally caps
+        "none" to 25,000 of its real 117,944 training examples so an epoch isn't almost entirely
+        spent on the majority class — every other class keeps every real example, and
+        validation/test stay the real, un-rebalanced distribution. Evaluated on macro-F1 and
+        per-class precision/recall, not accuracy, same reasoning as the yield model. The raw file
+        itself needed a real fix first: it was pickled under Python 2 with a ~2019 pandas version,
+        so a small custom <code>pickle.Unpickler</code> subclass (
+        <code>pipeline/wafer_data.py</code>) redirects a renamed internal pandas module and
+        decodes the raw bytes correctly — a real fix, not a workaround that drops data.
+      </>
+    ),
+  },
+  {
+    num: "04 · QUEUEING THEORY",
     title: "Textbook math, unit-tested against itself",
     body: (
       <>
@@ -37,7 +59,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "04 · SIMULATION",
+    num: "05 · SIMULATION",
     title: "Real breakdown physics, not a toy queue",
     body: (
       <>
@@ -48,7 +70,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "05 · OPTIMIZATION",
+    num: "06 · OPTIMIZATION",
     title: "Real integer programs, real solver",
     body: (
       <>
@@ -65,7 +87,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "06 · WHY NOT FULL-FAB EXACT SCHEDULING",
+    num: "07 · WHY NOT FULL-FAB EXACT SCHEDULING",
     title: "A scoped-down MILP, deliberately",
     body: (
       <>
@@ -80,7 +102,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "07 · PERSISTENCE & ACCESS",
+    num: "08 · PERSISTENCE & ACCESS",
     title: "A real backend, not just a compute script",
     body: (
       <>
@@ -93,7 +115,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "08 · MODELING CHOICES",
+    num: "09 · MODELING CHOICES",
     title: "Stated, not hidden",
     body: (
       <>

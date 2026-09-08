@@ -9,3 +9,4 @@ tests/
 gurobi.lic
 frontend/node_modules/
 frontend/dist/
+data/wm811k/

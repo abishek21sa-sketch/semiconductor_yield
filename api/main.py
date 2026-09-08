@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline import yield_model, scenarios, fab_data, capacity_plan, bottleneck_scheduler  # noqa: E402
+from pipeline import yield_model, scenarios, fab_data, capacity_plan, bottleneck_scheduler, wafer_cnn  # noqa: E402
 from api import db  # noqa: E402
 from api.auth import require_api_key  # noqa: E402
 
@@ -39,7 +39,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("fab_app")
 
-_warm_status = {"yield": False, "scenarios": {}, "capacity_plan": False, "bottleneck_dispatch": False, "error": None}
+_warm_status = {"yield": False, "scenarios": {}, "capacity_plan": False, "bottleneck_dispatch": False,
+                 "wafer_defects": False, "error": None}
 
 
 def _sanitize(obj):
@@ -89,6 +90,10 @@ def _warm_cache():
         _record("bottleneck_dispatch", "default", dispatch,
                 ["status", "n_variables", "total_weighted_tardiness_hours"])
         _warm_status["bottleneck_dispatch"] = True
+        log.info("Loading wafer defect CNN artifacts (train-once-serve-many; never trains here)...")
+        wafer = wafer_cnn.load_artifacts()
+        _record("wafer_defects", "default", wafer, ["status", "test_macro_f1", "test_accuracy", "n_labeled_total"])
+        _warm_status["wafer_defects"] = True
         log.info("All scenarios warm. Pipeline fully ready.")
     except Exception:
         _warm_status["error"] = traceback.format_exc()
@@ -204,6 +209,19 @@ def get_bottleneck_dispatch():
     bottleneck_scheduler.py for why full-fab exact scheduling is
     combinatorially intractable at real fab scale."""
     result = bottleneck_scheduler.run_default_dispatch()
+    return JSONResponse(_sanitize(result))
+
+
+@api.get("/wafer_defects")
+def get_wafer_defects():
+    """Real CNN classifier over real WM-811K wafer defect-map images
+    (172,950 human-labeled real wafers, 9 classes) -- see pipeline/
+    wafer_cnn.py. Train-once-serve-many: this loads a pre-trained model's
+    saved metrics and never trains on request. Returns {"status":
+    "not_trained", ...} if scripts/train_wafer_cnn.py hasn't been run on
+    this machine (the raw ~2GB dataset isn't in git -- see
+    data/wm811k/ATTRIBUTION.md)."""
+    result = wafer_cnn.load_artifacts()
     return JSONResponse(_sanitize(result))
 
 

@@ -6,12 +6,13 @@ This is a portfolio/demo decision-intelligence app, not a hardened production se
 
 ## Data
 
-Both datasets bundled in `data/` are public research data with no PII and no secrets:
+All datasets used are public research data with no PII and no secrets:
 
-- **SECOM** (UCI ML Repository #179): anonymized semiconductor fab sensor readings and pass/fail outcomes. No identifying information of any kind -- sensors are numbered, not named.
-- **SMT2020** (`data/smt2020_lvhm/`): a published academic semiconductor-fab simulation benchmark (Kopp, Hassoun, Kalir & Mönch, *IEEE TSM*, 2020). Synthetic/benchmark routing and reliability data representing a fab archetype, not a real company's operational data. See `data/smt2020_lvhm/ATTRIBUTION.md`.
+- **SECOM** (UCI ML Repository #179, bundled in `data/`): anonymized semiconductor fab sensor readings and pass/fail outcomes. No identifying information of any kind -- sensors are numbered, not named.
+- **SMT2020** (`data/smt2020_lvhm/`, bundled): a published academic semiconductor-fab simulation benchmark (Kopp, Hassoun, Kalir & Mönch, *IEEE TSM*, 2020). Synthetic/benchmark routing and reliability data representing a fab archetype, not a real company's operational data. See `data/smt2020_lvhm/ATTRIBUTION.md`.
+- **WM-811K** (`data/wm811k/`, **not bundled** -- see `data/wm811k/ATTRIBUTION.md`): a published academic wafer-defect-map dataset (Wu, Jang & Chen, *IEEE TSM*, 2015). Wafer maps and lot names only, no personal data of any kind. Not distributed in this repository (~2.1GB raw file; download it yourself from Kaggle if you want to train the CNN locally).
 
-Neither dataset requires or should ever be paired with real credentials, customer data, or proprietary fab data.
+None of these datasets require or should ever be paired with real credentials, customer data, or proprietary fab data.
 
 ## Secrets
 
@@ -19,6 +20,7 @@ None are committed to this repository:
 
 - `gurobi.lic` (a Gurobi license file, if you use a real one instead of the bundled free tier) is explicitly gitignored -- it's tied to your personal/academic license terms.
 - `API_KEY` (see below) and `fab_app.db` (the local SQLite file) are also gitignored. `API_KEY` is read from an environment variable only; it is never logged, and the request-timing middleware in `api/main.py` logs the path and status code, never headers or bodies.
+- `data/wm811k/LSWMD.pkl` and the trained wafer-CNN artifacts derived from it are gitignored too -- not secrets, just too large to commit (~2.1GB raw file).
 - `docker-compose.yml`'s Postgres credentials (`fab`/`fab`) are a local-dev-only default for the containerized demo, not a real secret -- don't reuse them anywhere that matters, and override `DATABASE_URL` for any deployment beyond a local demo.
 
 ## Authentication

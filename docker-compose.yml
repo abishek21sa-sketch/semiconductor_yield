@@ -35,6 +35,14 @@ services:
     #   - ./gurobi.lic:/opt/gurobi/gurobi.lic:ro
     # environment:
     #   - GRB_LICENSE_FILE=/opt/gurobi/gurobi.lic
+    #
+    # data/wm811k/ (the ~2GB WM-811K raw file + trained wafer-CNN artifacts)
+    # is gitignored AND dockerignored -- it's never baked into the image.
+    # Without it, /api/wafer_defects reports {"status": "not_trained", ...}.
+    # To serve real results, train on the host first (see DEPLOYMENT.md's
+    # "Wafer defect CNN" section) then mount the resulting artifacts:
+    # volumes:
+    #   - ./data/wm811k:/app/data/wm811k:ro
     depends_on:
       db:
         condition: service_healthy

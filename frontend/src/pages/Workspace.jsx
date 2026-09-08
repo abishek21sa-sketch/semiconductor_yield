@@ -13,6 +13,7 @@ import SimCard from "../components/SimCard.jsx";
 import OptCard from "../components/OptCard.jsx";
 import CapacityPlanCard from "../components/CapacityPlanCard.jsx";
 import DispatchCard from "../components/DispatchCard.jsx";
+import WaferDefectsCard from "../components/WaferDefectsCard.jsx";
 import RecommendationList from "../components/RecommendationList.jsx";
 import { fetchJSON } from "../api.js";
 
@@ -30,6 +31,7 @@ export default function Workspace() {
 
   const [capacityPlan, setCapacityPlan] = useState(null);
   const [dispatch, setDispatch] = useState(null);
+  const [waferDefects, setWaferDefects] = useState(null);
 
   const scenarioCountRef = useRef(0);
 
@@ -58,7 +60,7 @@ export default function Workspace() {
       while (true) {
         const st = await fetchJSON("/api/status");
         if (cancelled) return;
-        if (st.yield && Object.keys(st.scenarios).length >= list.length && st.capacity_plan && st.bottleneck_dispatch) break;
+        if (st.yield && Object.keys(st.scenarios).length >= list.length && st.capacity_plan && st.bottleneck_dispatch && st.wafer_defects) break;
         await new Promise((r) => setTimeout(r, 700));
       }
       if (cancelled) return;
@@ -72,10 +74,15 @@ export default function Workspace() {
       await loadScenario("baseline");
       if (cancelled) return;
 
-      const [plan, disp] = await Promise.all([fetchJSON("/api/capacity_plan"), fetchJSON("/api/bottleneck_dispatch")]);
+      const [plan, disp, wafer] = await Promise.all([
+        fetchJSON("/api/capacity_plan"),
+        fetchJSON("/api/bottleneck_dispatch"),
+        fetchJSON("/api/wafer_defects"),
+      ]);
       if (cancelled) return;
       setCapacityPlan(plan);
       setDispatch(disp);
+      setWaferDefects(wafer);
     }
 
     init().catch((e) => !cancelled && setError(e.message));
@@ -103,7 +110,7 @@ export default function Workspace() {
       <Header badge={badge} />
 
       {yieldData && topology ? (
-        <HeroStats y={yieldData} topo={topology} opt={scenarioData?.optimization} />
+        <HeroStats y={yieldData} topo={topology} opt={scenarioData?.optimization} wafer={waferDefects} />
       ) : (
         <section className="hero">
           <div className="stat-tile">
@@ -222,6 +229,22 @@ export default function Workspace() {
             <div className="loading">
               <span className="spinner" />
               Solving batch formation + parallel-machine scheduling…
+            </div>
+          </div>
+        )}
+
+        {waferDefects ? (
+          <WaferDefectsCard w={waferDefects} />
+        ) : (
+          <div className="card wide">
+            <h2>Wafer Defect Pattern Classification</h2>
+            <div className="card-sub">
+              Real CNN over the real WM-811K wafer defect-map dataset (172,950 human-labeled real
+              wafers, 9 classes)
+            </div>
+            <div className="loading">
+              <span className="spinner" />
+              Loading trained model artifacts…
             </div>
           </div>
         )}

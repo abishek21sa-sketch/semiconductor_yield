@@ -28,7 +28,23 @@ On startup the app runs its Alembic migrations automatically (`api/db.py`'s `ens
 .venv\Scripts\alembic revision --autogenerate -m "description"   # after changing a model in api/db.py
 ```
 
-First load takes ~30-90s while the server pre-warms the full real-data pipeline (the SECOM yield model, all four Quick Scenarios, the multi-period stochastic capacity plan, and the bottleneck dispatch scheduler) in a background thread. Poll `/api/status` or watch the badge in the top-right of the page.
+First load takes ~30-90s while the server pre-warms the full real-data pipeline (the SECOM yield model, all four Quick Scenarios, the multi-period stochastic capacity plan, the bottleneck dispatch scheduler, and loading the wafer defect CNN's saved metrics) in a background thread. Poll `/api/status` or watch the badge in the top-right of the page.
+
+## Wafer defect CNN (optional, one-time)
+
+`/api/wafer_defects` needs a trained model, which is **not** built automatically (unlike everything else in this app) because it needs a ~2GB dataset that isn't bundled and takes real minutes to train on CPU:
+
+```bash
+# 1. Download WM-811K's LSWMD.pkl from Kaggle (see data/wm811k/ATTRIBUTION.md)
+#    and place it at data/wm811k/LSWMD.pkl
+
+# 2. Train (one-time, ~15 min on CPU, no GPU needed)
+.venv\Scripts\python scripts\train_wafer_cnn.py
+```
+
+This writes `data/wm811k/wafer_cnn_{model.pt,metrics.json,samples.json}` (all gitignored, all local-only). Once they exist, `/api/wafer_defects` loads them instantly on every server startup -- it never re-trains. Without them, the endpoint returns `{"status": "not_trained", ...}` instead of failing, exactly like the license-gated MILPs report `license_required` without a Gurobi license -- same graceful-degradation pattern, different missing prerequisite.
+
+`scripts/train_wafer_cnn.py --smoke-test` runs a fast 1-epoch/2000-sample correctness check (writes to a throwaway temp directory, never touches the real artifacts above) -- useful to confirm the pipeline runs end to end before committing to a full run.
 
 ## Docker
 
@@ -62,7 +78,7 @@ curl -H "X-API-Key: change-me" http://127.0.0.1:8020/api/status
 ## Health checks
 
 - `GET /api/health` -- liveness only, returns `{"status": "ok"}` immediately regardless of pipeline warm-up state, and is never behind `API_KEY`. This is what Docker's `HEALTHCHECK` polls.
-- `GET /api/status` -- business readiness: whether the real-data pipeline (yield model + all scenarios + capacity plan + dispatch) has finished pre-warming, and any warm-up error. Behind `API_KEY` when it's set.
+- `GET /api/status` -- business readiness: whether the real-data pipeline (yield model + all scenarios + capacity plan + dispatch + wafer defect CNN artifacts) has finished pre-warming, and any warm-up error. Behind `API_KEY` when it's set.
 
 ## What this is not ready for
 
