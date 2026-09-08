@@ -133,12 +133,20 @@ def test_capacity_plan_exceeds_free_tier(client):
 
 
 def test_bottleneck_dispatch_shape(client):
+    # Same two-outcome contract as test_capacity_plan_exceeds_free_tier: this
+    # MILP's time-indexed formulation (96 hourly buckets x every job) exceeds
+    # Gurobi's free tier even at the smallest snapshot size, so CI (unlicensed)
+    # always sees "license_required" while a real license (e.g. locally)
+    # sees "optimal" -- both prove the model is genuinely too big.
     r = client.get("/api/bottleneck_dispatch")
     assert r.status_code == 200
     body = r.json()
     assert body["status"] in ("optimal", "license_required")
-    assert body["n_diffusion_lots"] > 0
-    assert body["n_dryetch_jobs"] > 0
+    assert body["n_variables"] > 2000
+    assert body["exceeds_gurobi_free_tier"] is True
+    if body["status"] == "optimal":
+        assert body["n_diffusion_lots"] > 0
+        assert body["n_dryetch_jobs"] > 0
 
 
 def test_topology_has_all_ten_real_products(client):

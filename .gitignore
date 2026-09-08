@@ -5,6 +5,7 @@ __pycache__/
 server.log
 .claude/settings.local.json
 data/secom.zip
+data/wm811k/
 gurobi.lic
 fab_app.db
 frontend/node_modules/
