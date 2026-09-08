@@ -1,0 +1,40 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build React frontend
+        run: |
+          cd frontend
+          npm ci --no-fund --no-audit
+          npm run build
+
+      # No Gurobi license is configured in CI. gurobipy falls back to its
+      # bundled size-limited free tier (2000 vars/constraints), which
+      # comfortably covers this app's release-mix MILP (~10 vars) -- so the
+      # full test suite, including the optimizer tests, runs unlicensed here.
+      - name: Run tests
+        run: pytest tests/ -v

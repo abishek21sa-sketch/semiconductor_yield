@@ -1,0 +1,13 @@
+pandas>=3.0
+numpy>=2.5
+scikit-learn>=1.9
+scipy>=1.18
+fastapi>=0.141
+uvicorn[standard]>=0.52
+simpy>=4.1
+pytest>=9.1
+httpx>=0.27
+gurobipy>=13.0
+sqlalchemy>=2.0
+alembic>=1.19
+psycopg2-binary>=2.9

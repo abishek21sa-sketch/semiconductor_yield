@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.claude/
+server.log
+tests/
+gurobi.lic
+frontend/node_modules/
+frontend/dist/

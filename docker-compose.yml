@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=fab
+      - POSTGRES_PASSWORD=fab
+      - POSTGRES_DB=fab_app
+    volumes:
+      - fab-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fab -d fab_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  fab-app:
+    build: .
+    ports:
+      - "8020:8020"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://fab:fab@db:5432/fab_app
+      # Unset (default) = auth disabled, every /api/* route is open -- fine
+      # for a local demo. Set a real value to require X-API-Key on every
+      # request; see SECURITY.md.
+      # - API_KEY=change-me
+    # No Gurobi license mounted by default. pipeline/capacity_plan.py and
+    # pipeline/bottleneck_scheduler.py build MILPs with thousands of
+    # variables (see their run_default_* functions) that exceed Gurobi's
+    # bundled size-limited free tier -- without a real license those two
+    # endpoints degrade gracefully to {"status": "license_required", ...}
+    # instead of crashing (see pipeline/capacity_plan.py's GurobiError
+    # handling). To exercise them for real, put an academic/commercial
+    # license at ./gurobi.lic (gitignored) and uncomment:
+    # volumes:
+    #   - ./gurobi.lic:/opt/gurobi/gurobi.lic:ro
+    # environment:
+    #   - GRB_LICENSE_FILE=/opt/gurobi/gurobi.lic
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8020/api/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+
+volumes:
+  fab-postgres-data:

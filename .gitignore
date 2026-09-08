@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+server.log
+.claude/settings.local.json
+data/secom.zip
+gurobi.lic
+fab_app.db
+frontend/node_modules/
+frontend/dist/
