@@ -74,7 +74,7 @@ def _sample_weekly_capacity(stations, weeks, n_scenarios, seed=7):
 def _build_and_solve(
     route_ids, weeks, n_scenarios, station_groups, capacity_scen,
     weekly_demand, route_step_totals, min_fill_rate, overtime_cap_fraction,
-    shortfall_penalty, backlog_penalty, priority_weights,
+    shortfall_penalty, backlog_penalty, priority_weights, yield_rate,
 ):
     """Builds and solves the full MILP. Raises gp.GurobiError (uncaught) if
     Gurobi can't build or solve a model this size without a real license --
@@ -96,16 +96,22 @@ def _build_and_solve(
     # per-week floor combined with the overtime cap below can make some
     # weeks infeasible outright when that week's sampled capacity is
     # unusually bad.
+    # yield_rate converts raw released lots to real good units delivered
+    # (release * yield_rate) wherever this model tracks demand satisfaction
+    # -- it does NOT touch the capacity constraints below, since a lot that
+    # later fails still consumed real fab capacity on its way through.
+    # yield_rate=1.0 (default) reproduces the original no-yield-loss model
+    # exactly, so existing callers/tests are unaffected.
     for rid in route_ids:
         m.addConstr(
-            gp.quicksum(release[rid, w] for w in W) >= min_fill_rate * weekly_demand[rid] * weeks,
+            gp.quicksum(release[rid, w] * yield_rate for w in W) >= min_fill_rate * weekly_demand[rid] * weeks,
             name=f"min_release_cumulative_{rid}",
         )
 
     for rid in route_ids:
-        m.addConstr(backlog[rid, 0] == weekly_demand[rid] - release[rid, 0])
+        m.addConstr(backlog[rid, 0] == weekly_demand[rid] - release[rid, 0] * yield_rate)
         for w in range(1, weeks):
-            m.addConstr(backlog[rid, w] == backlog[rid, w - 1] + weekly_demand[rid] - release[rid, w])
+            m.addConstr(backlog[rid, w] == backlog[rid, w - 1] + weekly_demand[rid] - release[rid, w] * yield_rate)
 
     for grp in station_groups:
         for w in W:
@@ -143,8 +149,17 @@ def _build_and_solve(
 def solve_multi_period_plan(
     route_ids, weeks=26, n_scenarios=10, shortfall_penalty=8.0,
     backlog_penalty=1.0, min_fill_rate=0.02, overtime_cap_fraction=0.20,
-    seed=7, priority_weights=None,
+    seed=7, priority_weights=None, yield_rate=1.0,
 ):
+    """yield_rate (default 1.0, no adjustment): fraction of released lots
+    that come out as real good units. When set below 1.0 (e.g. to the real
+    calibrated SECOM yield rate -- see api/main.py), the plan needs to
+    release proportionally more raw lots to net the same real demand,
+    exactly how real fabs do rough-cut capacity planning when they don't
+    have this specific line's own yield data (SMT2020 doesn't publish
+    one). This is a real cross-dataset planning assumption, stated
+    explicitly here -- not a claim that SECOM and this SMT2020 fab are the
+    same physical line."""
     t0 = time.time()
     stations = fab_data.load_station_groups()
     demand = fab_data.load_demand()
@@ -174,7 +189,7 @@ def solve_multi_period_plan(
         m, release, backlog, shortfall = _build_and_solve(
             route_ids, weeks, n_scenarios, station_groups, capacity_scen,
             weekly_demand, route_step_totals, min_fill_rate, overtime_cap_fraction,
-            shortfall_penalty, backlog_penalty, priority_weights,
+            shortfall_penalty, backlog_penalty, priority_weights, yield_rate,
         )
     except gp.GurobiError as e:
         return {
@@ -206,6 +221,7 @@ def solve_multi_period_plan(
     return {
         "status": "optimal",
         "objective": m.ObjVal,
+        "yield_rate": yield_rate,
         "solve_time_sec": solve_time,
         "n_variables": n_vars,
         "n_constraints": n_constrs,
@@ -223,5 +239,18 @@ def solve_multi_period_plan(
 @lru_cache(maxsize=1)
 def run_default_plan():
     """Cached entry point for the API/frontend: the 10-product, 26-week,
-    10-scenario plan at tuned default parameters."""
+    10-scenario plan at tuned default parameters. No yield adjustment
+    (yield_rate=1.0) -- see run_yield_adjusted_plan for the version that
+    nets out real SECOM-measured yield loss."""
     return solve_multi_period_plan(tuple(range(1, 11)))
+
+
+@lru_cache(maxsize=2)
+def run_yield_adjusted_plan(yield_rate: float):
+    """Same plan, same everything else, but with the real calibrated
+    SECOM yield rate netted out of demand satisfaction -- see
+    solve_multi_period_plan's yield_rate docstring for the honest framing
+    of this cross-dataset assumption. Cached separately from
+    run_default_plan() so both the unadjusted and yield-adjusted views can
+    be shown side by side without recomputing either."""
+    return solve_multi_period_plan(tuple(range(1, 11)), yield_rate=yield_rate)

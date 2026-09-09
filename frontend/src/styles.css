@@ -50,6 +50,18 @@ header .header-right { display: flex; align-items: center; gap: 14px; flex-wrap:
   border-radius: 999px; padding: 4px 12px; white-space: nowrap; font-weight: 600;
 }
 
+/* ---------- Impact summary banner ---------- */
+section.impact-banner {
+  padding: 18px 32px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(90deg, rgba(57,135,229,0.10), transparent 65%);
+  border-left: 3px solid var(--s1-blue);
+}
+.impact-banner-label {
+  font-size: 11px; color: var(--s1-blue); text-transform: uppercase;
+  letter-spacing: .08em; font-weight: 700; margin-bottom: 8px;
+}
+.impact-banner-text { font-size: 14.5px; line-height: 1.65; color: var(--text-primary); margin: 0; max-width: 1150px; }
+
 /* ---------- Hero stats ---------- */
 section.hero {
   padding: 22px 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

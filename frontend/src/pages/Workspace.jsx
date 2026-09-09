@@ -14,6 +14,9 @@ import OptCard from "../components/OptCard.jsx";
 import CapacityPlanCard from "../components/CapacityPlanCard.jsx";
 import DispatchCard from "../components/DispatchCard.jsx";
 import WaferDefectsCard from "../components/WaferDefectsCard.jsx";
+import IntegrationCard from "../components/IntegrationCard.jsx";
+import ArchetypeComparisonCard from "../components/ArchetypeComparisonCard.jsx";
+import ImpactSummaryBanner from "../components/ImpactSummaryBanner.jsx";
 import RecommendationList from "../components/RecommendationList.jsx";
 import { fetchJSON } from "../api.js";
 
@@ -32,6 +35,10 @@ export default function Workspace() {
   const [capacityPlan, setCapacityPlan] = useState(null);
   const [dispatch, setDispatch] = useState(null);
   const [waferDefects, setWaferDefects] = useState(null);
+  const [waferBaseline, setWaferBaseline] = useState(null);
+  const [archetypeComparison, setArchetypeComparison] = useState(null);
+  const [integration, setIntegration] = useState(null);
+  const [impactSummary, setImpactSummary] = useState(null);
 
   const scenarioCountRef = useRef(0);
 
@@ -60,7 +67,12 @@ export default function Workspace() {
       while (true) {
         const st = await fetchJSON("/api/status");
         if (cancelled) return;
-        if (st.yield && Object.keys(st.scenarios).length >= list.length && st.capacity_plan && st.bottleneck_dispatch && st.wafer_defects) break;
+        if (
+          st.yield && Object.keys(st.scenarios).length >= list.length && st.capacity_plan &&
+          st.bottleneck_dispatch && st.wafer_defects && st.archetype_comparison && st.integration &&
+          st.impact_summary
+        )
+          break;
         await new Promise((r) => setTimeout(r, 700));
       }
       if (cancelled) return;
@@ -74,15 +86,23 @@ export default function Workspace() {
       await loadScenario("baseline");
       if (cancelled) return;
 
-      const [plan, disp, wafer] = await Promise.all([
+      const [plan, disp, wafer, waferBase, arch, integ, impact] = await Promise.all([
         fetchJSON("/api/capacity_plan"),
         fetchJSON("/api/bottleneck_dispatch"),
         fetchJSON("/api/wafer_defects"),
+        fetchJSON("/api/wafer_defects_baseline"),
+        fetchJSON("/api/archetype_comparison"),
+        fetchJSON("/api/integration"),
+        fetchJSON("/api/impact_summary"),
       ]);
       if (cancelled) return;
       setCapacityPlan(plan);
       setDispatch(disp);
       setWaferDefects(wafer);
+      setWaferBaseline(waferBase);
+      setArchetypeComparison(arch);
+      setIntegration(integ);
+      setImpactSummary(impact);
     }
 
     init().catch((e) => !cancelled && setError(e.message));
@@ -108,6 +128,8 @@ export default function Workspace() {
   return (
     <>
       <Header badge={badge} />
+
+      <ImpactSummaryBanner summary={impactSummary} />
 
       {yieldData && topology ? (
         <HeroStats y={yieldData} topo={topology} opt={scenarioData?.optimization} wafer={waferDefects} />
@@ -234,7 +256,7 @@ export default function Workspace() {
         )}
 
         {waferDefects ? (
-          <WaferDefectsCard w={waferDefects} />
+          <WaferDefectsCard w={waferDefects} baseline={waferBaseline} />
         ) : (
           <div className="card wide">
             <h2>Wafer Defect Pattern Classification</h2>
@@ -245,6 +267,30 @@ export default function Workspace() {
             <div className="loading">
               <span className="spinner" />
               Loading trained model artifacts…
+            </div>
+          </div>
+        )}
+
+        {integration ? (
+          <IntegrationCard integ={integration} />
+        ) : (
+          <div className="card wide">
+            <h2>Cross-Pipeline Integration</h2>
+            <div className="loading">
+              <span className="spinner" />
+              Computing…
+            </div>
+          </div>
+        )}
+
+        {archetypeComparison ? (
+          <ArchetypeComparisonCard cmp={archetypeComparison} />
+        ) : (
+          <div className="card wide">
+            <h2>Real Fab Archetype Comparison: LVHM vs. HVLM</h2>
+            <div className="loading">
+              <span className="spinner" />
+              Computing…
             </div>
           </div>
         )}

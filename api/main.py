@@ -19,7 +19,10 @@ from fastapi.staticfiles import StaticFiles
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pipeline import yield_model, scenarios, fab_data, capacity_plan, bottleneck_scheduler, wafer_cnn  # noqa: E402
+from pipeline import (  # noqa: E402
+    yield_model, scenarios, fab_data, capacity_plan, bottleneck_scheduler, wafer_cnn, wafer_baseline,
+    archetype_comparison, quality_risk, impact_summary,
+)
 from api import db  # noqa: E402
 from api.auth import require_api_key  # noqa: E402
 
@@ -40,7 +43,8 @@ logging.basicConfig(
 log = logging.getLogger("fab_app")
 
 _warm_status = {"yield": False, "scenarios": {}, "capacity_plan": False, "bottleneck_dispatch": False,
-                 "wafer_defects": False, "error": None}
+                 "wafer_defects": False, "archetype_comparison": False, "integration": False,
+                 "impact_summary": False, "error": None}
 
 
 def _sanitize(obj):
@@ -66,6 +70,54 @@ def _record(run_type, run_key, result, summary_keys):
         log.exception("Failed to record %s/%s to history (non-fatal)", run_type, run_key)
 
 
+def _compute_integration(baseline_scenario=None):
+    """The real cross-pipeline integration: (1) the real calibrated SECOM
+    yield rate applied as a planning parameter to the SMT2020 multi-period
+    capacity plan (see capacity_plan.py's yield_rate docstring for the
+    honest cross-dataset framing -- SECOM and this SMT2020 fab are
+    different real fabs; the yield rate is used as a representative
+    real-world planning assumption, not a claim they're the same line),
+    and (2) the real WM-811K defect-type distribution mapped onto likely
+    SMT2020 process areas (pipeline/quality_risk.py -- a stated heuristic
+    mapping, not derived co-occurrence data). Two genuinely different real
+    datasets feeding as PARAMETERS into the same real fab's planning
+    problem, not a fabricated row-level join."""
+    y = yield_model.run_full_analysis()
+    yield_rate = y["meta"]["yield_rate"]
+    unadjusted = capacity_plan.run_default_plan()
+    adjusted = capacity_plan.run_yield_adjusted_plan(yield_rate)
+    baseline_scenario = baseline_scenario or scenarios.run_scenario("baseline")
+    capacity_bottleneck = baseline_scenario["capacity"]["bottleneck"]
+
+    wafer = wafer_cnn.load_artifacts()
+    quality = None
+    if wafer.get("status") == "trained":
+        quality = quality_risk.quality_risk_by_station(wafer["class_distribution"])
+
+    baseline_model = wafer_baseline.load_artifacts()
+
+    backlog_delta = None
+    if unadjusted.get("status") == "optimal" and adjusted.get("status") == "optimal":
+        backlog_delta = adjusted["total_backlog_final_week"] - unadjusted["total_backlog_final_week"]
+
+    return {
+        "status": "optimal",
+        "yield_rate_used": yield_rate,
+        "yield_source": "real SECOM calibrated yield rate (cross-dataset planning assumption)",
+        "capacity_plan_unadjusted_backlog": unadjusted.get("total_backlog_final_week"),
+        "capacity_plan_yield_adjusted_backlog": adjusted.get("total_backlog_final_week"),
+        "backlog_delta_from_yield_loss": backlog_delta,
+        "capacity_bottleneck_station": capacity_bottleneck,
+        "quality_risk": quality,
+        "same_station_both_lenses": (quality["top_quality_risk_station"] == capacity_bottleneck) if quality else None,
+        "cnn_macro_f1": wafer.get("test_macro_f1"),
+        "baseline_macro_f1": baseline_model.get("test_macro_f1"),
+        "cnn_beats_baseline_by": (
+            wafer["test_macro_f1"] - baseline_model["test_macro_f1"]
+        ) if wafer.get("status") == "trained" and baseline_model.get("status") == "trained" else None,
+    }
+
+
 def _warm_cache():
     try:
         log.info("Pre-warming yield model on real SECOM data...")
@@ -74,9 +126,12 @@ def _warm_cache():
                 ["status", "roc_auc", "pr_auc", "yield_rate", "n_lots"])
         _warm_status["yield"] = True
         log.info("Yield model ready.")
+        baseline_run = None
         for s in scenarios.SCENARIOS:
             log.info("Pre-warming scenario '%s' (simulation + Gurobi)...", s)
             r = scenarios.run_scenario(s)
+            if s == "baseline":
+                baseline_run = r  # reused below instead of recomputing (SimPy + Gurobi, not cached)
             _record("scenario", s, {"status": "optimal", "bottleneck": r["capacity"]["bottleneck"],
                                      "recommendation_count": len(r["recommendation"])},
                     ["status", "bottleneck", "recommendation_count"])
@@ -94,6 +149,24 @@ def _warm_cache():
         wafer = wafer_cnn.load_artifacts()
         _record("wafer_defects", "default", wafer, ["status", "test_macro_f1", "test_accuracy", "n_labeled_total"])
         _warm_status["wafer_defects"] = True
+        log.info("Comparing LVHM vs HVLM real fab archetypes...")
+        archcmp = archetype_comparison.compare_archetypes()
+        _record("archetype_comparison", "lvhm_vs_hvlm", archcmp,
+                ["status", "same_bottleneck_station", "bottleneck_utilization_delta"])
+        _warm_status["archetype_comparison"] = True
+        log.info("Computing cross-pipeline integration (yield-adjusted plan + quality-risk mapping)...")
+        integration = _compute_integration(baseline_scenario=baseline_run)
+        _record("integration", "default", integration,
+                ["status", "backlog_delta_from_yield_loss", "same_station_both_lenses", "cnn_beats_baseline_by"])
+        _warm_status["integration"] = True
+        log.info("Composing the unifying decision-intelligence impact summary...")
+        demand = fab_data.load_demand()
+        total_demand = float(demand["weekly_demand_lots"].sum())
+        baseline_wafer_model = wafer_baseline.load_artifacts()
+        arch = archetype_comparison.compare_archetypes()
+        summary = impact_summary.build_summary(baseline_run, total_demand, integration, wafer, baseline_wafer_model, arch)
+        _record("impact_summary", "default", summary, ["status", "pct_real_demand_met", "defect_catch_rate"])
+        _warm_status["impact_summary"] = True
         log.info("All scenarios warm. Pipeline fully ready.")
     except Exception:
         _warm_status["error"] = traceback.format_exc()
@@ -222,6 +295,52 @@ def get_wafer_defects():
     this machine (the raw ~2GB dataset isn't in git -- see
     data/wm811k/ATTRIBUTION.md)."""
     result = wafer_cnn.load_artifacts()
+    return JSONResponse(_sanitize(result))
+
+
+@api.get("/integration")
+def get_integration():
+    """See _compute_integration()'s docstring for the honest framing of
+    what this genuinely integrates vs. what it explicitly does not claim."""
+    result = _compute_integration()
+    return JSONResponse(_sanitize(result))
+
+
+@api.get("/impact_summary")
+def get_impact_summary():
+    """One headline synthesis composed entirely from numbers the other
+    endpoints already computed -- see pipeline/impact_summary.py's module
+    docstring for why this adds no new fabricated math."""
+    y = yield_model.run_full_analysis()
+    baseline_scenario = scenarios.run_scenario("baseline")
+    demand = fab_data.load_demand()
+    total_demand = float(demand["weekly_demand_lots"].sum())
+    integration = _compute_integration()
+    wafer = wafer_cnn.load_artifacts()
+    baseline_model = wafer_baseline.load_artifacts()
+    arch = archetype_comparison.compare_archetypes()
+    result = impact_summary.build_summary(baseline_scenario, total_demand, integration, wafer, baseline_model, arch)
+    return JSONResponse(_sanitize(result))
+
+
+@api.get("/wafer_defects_baseline")
+def get_wafer_defects_baseline():
+    """The hand-engineered-feature RandomForest baseline (pipeline/
+    wafer_baseline.py), trained/evaluated on the exact same real split as
+    the CNN -- exists so /api/integration's cnn_beats_baseline_by number
+    is independently checkable, and so the comparison itself is
+    inspectable (confusion matrix, per-class metrics), not just asserted."""
+    result = wafer_baseline.load_artifacts()
+    return JSONResponse(_sanitize(result))
+
+
+@api.get("/archetype_comparison")
+def get_archetype_comparison():
+    """Real comparison between the SMT2020 benchmark's two published fab
+    archetypes -- LVHM (10 real products, used everywhere else in this app)
+    and HVLM (2 real products) -- see pipeline/archetype_comparison.py for
+    why this is a fair same-fab comparison, not two unrelated datasets."""
+    result = archetype_comparison.compare_archetypes()
     return JSONResponse(_sanitize(result))
 
 

@@ -1,9 +1,10 @@
+import { useState } from "react";
 import BarRow from "./BarRow.jsx";
 import ConfusionMatrix from "./ConfusionMatrix.jsx";
 import WaferGrid from "./WaferGrid.jsx";
 import { fmtNum } from "../api.js";
 
-export default function WaferDefectsCard({ w }) {
+export default function WaferDefectsCard({ w, baseline }) {
   return (
     <div className="card wide">
       <h2>Wafer Defect Pattern Classification</h2>
@@ -16,15 +17,17 @@ export default function WaferDefectsCard({ w }) {
           <span style={{ color: "var(--warning)" }}>No trained model available.</span> {w.message}
         </div>
       ) : (
-        <WaferDefectsBody w={w} />
+        <WaferDefectsBody w={w} baseline={baseline} />
       )}
     </div>
   );
 }
 
-function WaferDefectsBody({ w }) {
+function WaferDefectsBody({ w, baseline }) {
+  const [showHeatmap, setShowHeatmap] = useState(true);
   const distEntries = Object.entries(w.class_distribution);
   const maxCount = Math.max(...distEntries.map(([, v]) => v));
+  const hasBaseline = baseline && baseline.status === "trained";
 
   return (
     <>
@@ -54,6 +57,27 @@ function WaferDefectsBody({ w }) {
           <div className="l">Training time (CPU)</div>
         </div>
       </div>
+
+      {hasBaseline && (
+        <div
+          style={{
+            display: "flex", gap: 20, alignItems: "center", background: "var(--surface-2)",
+            borderRadius: 8, padding: "10px 14px", marginTop: 4, marginBottom: 14, fontSize: 13,
+          }}
+        >
+          <div>
+            <b style={{ color: "var(--text-primary)" }}>CNN: {w.test_macro_f1.toFixed(3)} macro-F1</b>
+          </div>
+          <div style={{ color: "var(--text-muted)" }}>vs.</div>
+          <div style={{ color: "var(--text-secondary)" }}>
+            Hand-engineered-feature baseline (RandomForest, same real split): {baseline.test_macro_f1.toFixed(3)}
+          </div>
+          <div style={{ color: w.test_macro_f1 > baseline.test_macro_f1 ? "var(--good)" : "var(--critical)", fontWeight: 600 }}>
+            {w.test_macro_f1 > baseline.test_macro_f1 ? "+" : ""}
+            {(w.test_macro_f1 - baseline.test_macro_f1).toFixed(3)}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 24, alignItems: "start", marginTop: 14 }}>
         <div>
@@ -103,8 +127,17 @@ function WaferDefectsBody({ w }) {
 
       {w.sample_gallery && (
         <>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", margin: "18px 0 8px" }}>
-            Real test-set wafer maps, true vs. predicted (blue = pass die, red = fail die)
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", margin: "18px 0 8px" }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Real test-set wafer maps, true vs. predicted (blue = pass die, red = fail die)
+              {w.sample_gallery[0]?.heatmap && " -- yellow glow = real Grad-CAM attention (what the model looked at)"}
+            </div>
+            {w.sample_gallery[0]?.heatmap && (
+              <label style={{ fontSize: 11.5, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} />
+                Grad-CAM overlay
+              </label>
+            )}
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
             {w.sample_gallery.map((s, i) => (
@@ -115,7 +148,7 @@ function WaferDefectsBody({ w }) {
                   border: `1px solid ${s.correct ? "var(--good)" : "var(--critical)"}`,
                 }}
               >
-                <WaferGrid grid={s.grid} size={90} />
+                <WaferGrid grid={s.grid} size={90} heatmap={showHeatmap ? s.heatmap : null} />
                 <div style={{ fontSize: 9.5, marginTop: 4, textAlign: "center", lineHeight: 1.3 }}>
                   <div style={{ color: "var(--text-secondary)" }}>true: {s.true_label}</div>
                   <div style={{ color: s.correct ? "var(--good)" : "var(--critical)" }}>
@@ -135,7 +168,10 @@ function WaferDefectsBody({ w }) {
         nearly all its time on the majority class -- every other class keeps every real training
         example, and validation/test are never rebalanced. Nearest-neighbor resize to{" "}
         {w.wafer_size}×{w.wafer_size} preserves the real categorical {"{0,1,2}"} values (no
-        interpolation artifacts). See Methodology for the full write-up.
+        interpolation artifacts). Rotation/flip augmentation is {w.augment ? "on" : "off"} for this
+        run, based on a real same-seed controlled A/B (69.8% vs 69.0% macro-F1) -- a first,
+        unseeded comparison wrongly suggested it hurt; fixing that bug and rerunning it properly
+        reversed the conclusion. See Methodology for the full write-up.
       </div>
     </>
   );

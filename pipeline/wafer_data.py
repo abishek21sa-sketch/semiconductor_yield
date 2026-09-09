@@ -132,3 +132,26 @@ def stratified_split(labeled_df, seed=13, train_frac=0.8, val_frac=0.1):
         labeled_df.loc[np.concatenate(val_idx)],
         labeled_df.loc[np.concatenate(test_idx)],
     )
+
+
+def prepare_training_split(labeled_df, seed=13, max_none_train=25000):
+    """The one real split every model in this app is trained/evaluated
+    against -- pipeline/wafer_cnn.py's CNN and pipeline/wafer_baseline.py's
+    hand-engineered-feature classifier both call this, so their reported
+    macro-F1 numbers are a genuine apples-to-apples comparison on identical
+    data, not two different splits that happen to look similar.
+
+    max_none_train subsamples ONLY the training split's dominant "none"
+    class (real: 117,944 of 138,357 training examples) down to a smaller
+    real subset -- every other class keeps every real training example, and
+    val/test are never touched, so reported metrics reflect the real,
+    un-rebalanced class distribution. Set to None to skip this."""
+    import pandas as pd
+
+    train_df, val_df, test_df = stratified_split(labeled_df, seed=seed)
+    if max_none_train:
+        none_rows = train_df[train_df.label == "none"]
+        if len(none_rows) > max_none_train:
+            keep_none = none_rows.sample(n=max_none_train, random_state=seed)
+            train_df = pd.concat([train_df[train_df.label != "none"], keep_none]).reset_index(drop=True)
+    return train_df, val_df, test_df

@@ -11,7 +11,8 @@ const ITEMS = [
         (Wu, Jang &amp; Chen, <em>IEEE TSM</em> 2015): 811,457 real wafer maps, 172,950 human-labeled
         into 9 real classes. SMT2020 (Kopp, Hassoun, Kalir &amp; Mönch, <em>IEEE TSM</em> 2020):
         the published academic benchmark for reentrant wafer-fab simulation — real routes, real
-        tool counts, real MTBF/MTTR.
+        tool counts, real MTBF/MTTR, published in two real archetype configurations (LVHM and
+        HVLM) this app uses both of.
       </>
     ),
   },
@@ -48,7 +49,24 @@ const ITEMS = [
     ),
   },
   {
-    num: "04 · QUEUEING THEORY",
+    num: "04 · CNN EXPLAINABILITY & BASELINE",
+    title: "Prove the complexity earns its keep",
+    body: (
+      <>
+        Two checks against building a CNN just because it's fashionable. First, a hand-engineered-
+        feature baseline (<code>pipeline/wafer_baseline.py</code>): 6 classic wafer-map features
+        (defect density, radial centroid, radial spread, edge concentration, connected-component
+        structure) into a class-weighted RandomForest, trained/evaluated on the exact same real
+        split as the CNN — so the macro-F1 gap between them is a genuine apples-to-apples "does the
+        spatial modeling earn its complexity" comparison, not two different splits that happen to
+        look similar. Second, real Grad-CAM (Selvaraju et al. 2017) computed from the trained
+        model's own gradients on each sample-gallery wafer — shows which real pixels actually drove
+        each prediction, not just what the prediction was.
+      </>
+    ),
+  },
+  {
+    num: "05 · QUEUEING THEORY",
     title: "Textbook math, unit-tested against itself",
     body: (
       <>
@@ -59,7 +77,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "05 · SIMULATION",
+    num: "06 · SIMULATION",
     title: "Real breakdown physics, not a toy queue",
     body: (
       <>
@@ -70,7 +88,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "06 · OPTIMIZATION",
+    num: "07 · OPTIMIZATION",
     title: "Real integer programs, real solver",
     body: (
       <>
@@ -87,7 +105,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "07 · WHY NOT FULL-FAB EXACT SCHEDULING",
+    num: "08 · WHY NOT FULL-FAB EXACT SCHEDULING",
     title: "A scoped-down MILP, deliberately",
     body: (
       <>
@@ -102,7 +120,42 @@ const ITEMS = [
     ),
   },
   {
-    num: "08 · PERSISTENCE & ACCESS",
+    num: "09 · CROSS-PIPELINE INTEGRATION",
+    title: "Real datasets as planning parameters, not a fake join",
+    body: (
+      <>
+        SECOM and this SMT2020 fab are different real fabs — nothing here claims otherwise. What{" "}
+        <code>pipeline/capacity_plan.py</code>'s <code>yield_rate</code> parameter does is use the
+        real calibrated SECOM yield rate as a representative real-world planning assumption inside
+        the SMT2020 capacity plan (netting raw releases down to real good units), exactly how real
+        fabs plan when they don't have this specific line's own yield data yet. Separately,{" "}
+        <code>pipeline/quality_risk.py</code> maps the real WM-811K defect-type distribution onto
+        the SMT2020 station groups conventionally associated with that defect <em>pattern</em> in
+        yield-engineering practice — a stated heuristic mapping, not derived co-occurrence data.
+        The result, in this app's own real numbers: the capacity bottleneck (Diffusion) and the
+        top quality-risk area (Wet_Etch) are different stations — fixing one wouldn't fix the
+        other, a genuinely useful finding neither dataset shows on its own.
+      </>
+    ),
+  },
+  {
+    num: "10 · ARCHETYPE COMPARISON",
+    title: "Same fab, same tools, different demand concentration",
+    body: (
+      <>
+        LVHM and HVLM are real SMT2020 configurations that share the exact same 106-tool real
+        inventory and even reuse two of the same real route files verbatim — the real difference
+        is how real demand concentrates (LVHM spreads ~390 lots/week across 10 products; HVLM
+        concentrates the same ~390 lots/week onto 2). Evaluated at the same total system release
+        rate so the comparison isn't an artifact of picking two different paces,{" "}
+        <code>pipeline/archetype_comparison.py</code> shows concentrating demand onto fewer
+        products makes the same real bottleneck's Kingman queueing wait measurably worse — same
+        capacity, same tools, worse congestion, purely from product-mix strategy.
+      </>
+    ),
+  },
+  {
+    num: "11 · PERSISTENCE & ACCESS",
     title: "A real backend, not just a compute script",
     body: (
       <>
@@ -115,7 +168,7 @@ const ITEMS = [
     ),
   },
   {
-    num: "09 · MODELING CHOICES",
+    num: "12 · MODELING CHOICES",
     title: "Stated, not hidden",
     body: (
       <>

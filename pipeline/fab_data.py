@@ -18,7 +18,16 @@ from pathlib import Path
 
 import pandas as pd
 
-DATA = Path(__file__).resolve().parent.parent / "data" / "smt2020_lvhm"
+_BASE = Path(__file__).resolve().parent.parent / "data"
+DATA_DIRS = {
+    "lvhm": _BASE / "smt2020_lvhm",   # Low-Volume-High-Mix: 10 real products
+    "hvlm": _BASE / "smt2020_hvlm",   # High-Volume-Low-Mix: 2 real products -- see data/smt2020_hvlm/ATTRIBUTION.md
+}
+DATA = DATA_DIRS["lvhm"]  # kept for any straggling direct references; prefer _dir(archetype) below
+
+
+def _dir(archetype: str = "lvhm") -> Path:
+    return DATA_DIRS[archetype]
 
 # Real STNGRP categories present in tool.txt.1l for this benchmark fab.
 STNGRP_PREFIXES = [
@@ -51,13 +60,29 @@ def classify_stngrp(stnfam: str) -> str:
     return "Other"
 
 
-@lru_cache(maxsize=1)
-def load_station_groups() -> pd.DataFrame:
+def _read_ragged_tsv(path: Path) -> pd.DataFrame:
+    """Some of the raw benchmark's .1l files (HVLM's tool.txt.1l, not LVHM's)
+    carry inconsistent trailing tab padding per row -- real messiness in the
+    published file, not something to silently mis-parse. Truncates each row
+    to the header's real column count rather than either crashing (pandas'
+    default strict parser) or dropping the row (on_bad_lines='skip', which
+    would lose real tools)."""
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    n_cols = len(lines[0].split("\t"))
+    fixed = [lines[0]] + ["\t".join(line.split("\t")[:n_cols]) for line in lines[1:]]
+    from io import StringIO
+    return pd.read_csv(StringIO("\n".join(fixed)), sep="\t")
+
+
+@lru_cache(maxsize=4)
+def load_station_groups(archetype: str = "lvhm") -> pd.DataFrame:
     """Real tool counts per station group + real MTBF/MTTR reliability data."""
-    tool = pd.read_csv(DATA / "tool.txt.1l", sep="\t")
+    data = _dir(archetype)
+    tool = _read_ragged_tsv(data / "tool.txt.1l")
     counts = tool.groupby("STNGRP")["STN"].nunique().rename("n_tools").reset_index()
 
-    downcal = pd.read_csv(DATA / "downcal.txt", sep="\t")
+    downcal = pd.read_csv(data / "downcal.txt", sep="\t")
     downcal = downcal.rename(columns={"IGNORE": "STNGRP"})[["STNGRP", "MTTF", "MTTR"]]
 
     stations = counts.merge(downcal, on="STNGRP", how="left")
@@ -70,17 +95,24 @@ def load_station_groups() -> pd.DataFrame:
     return stations.set_index("STNGRP")
 
 
-@lru_cache(maxsize=1)
-def _route_files():
-    return sorted(DATA.glob("route_*.txt"), key=lambda p: int(re.search(r"\d+", p.stem).group()))
+@lru_cache(maxsize=4)
+def _route_files(archetype: str = "lvhm"):
+    return sorted(_dir(archetype).glob("route_*.txt"), key=lambda p: int(re.search(r"\d+", p.stem).group()))
 
 
-def load_route(route_id: int) -> pd.DataFrame:
+def route_ids(archetype: str = "lvhm") -> list:
+    """Real route IDs actually present for this archetype, derived from the
+    route_*.txt files on disk -- LVHM has 10 real products (route_1..10),
+    HVLM has 2 (route_3, route_4), not hardcoded here."""
+    return [int(re.search(r"\d+", p.stem).group()) for p in _route_files(archetype)]
+
+
+def load_route(route_id: int, archetype: str = "lvhm") -> pd.DataFrame:
     """Real ordered process-step sequence for one product, aggregated to
     station-group level. PDIST/PTIME/PTIME2 are the benchmark's own
     stochastic processing-time distribution parameters (uniform(PTIME-PTIME2,
     PTIME+PTIME2) in minutes, per lot/batch/piece per PTPER)."""
-    path = DATA / f"route_{route_id}.txt"
+    path = _dir(archetype) / f"route_{route_id}.txt"
     r = pd.read_csv(path, sep="\t")
     r["STNGRP"] = r["STNFAM"].astype(str).apply(classify_stngrp)
     steps = []
@@ -100,8 +132,8 @@ def load_route(route_id: int) -> pd.DataFrame:
     return pd.DataFrame(steps)
 
 
-def route_summary(route_id: int) -> dict:
-    steps = load_route(route_id)
+def route_summary(route_id: int, archetype: str = "lvhm") -> dict:
+    steps = load_route(route_id, archetype)
     total_ptime = steps["mean_ptime_min"].sum()
     by_group = steps.groupby("stngrp").agg(
         visits=("step", "count"), total_min=("mean_ptime_min", "sum"),
@@ -129,21 +161,21 @@ def apply_station_overrides(stations: pd.DataFrame, overrides: dict | None) -> p
     return stations
 
 
-@lru_cache(maxsize=1)
-def load_demand() -> pd.DataFrame:
+@lru_cache(maxsize=4)
+def load_demand(archetype: str = "lvhm") -> pd.DataFrame:
     """Real per-product weekly demand rate, derived from the benchmark's own
     order.txt release-stream definitions (REPEAT = minutes between standard-
     priority lot releases for that part)."""
-    order = pd.read_csv(DATA / "order.txt", sep="\t")
+    order = pd.read_csv(_dir(archetype) / "order.txt", sep="\t")
     std = order[order["PRIOR"] == order["PRIOR"].min()].copy()
     std["route_id"] = std["PART"].str.extract(r"(\d+)").astype(int)
     std["weekly_demand_lots"] = (60 * 24 * 7) / std["REPEAT"]
     return std.set_index("route_id")[["PART", "REPEAT", "weekly_demand_lots"]]
 
 
-def available_products(n=3):
+def available_products(n=3, archetype: str = "lvhm"):
     """List of (route_id, part_name) from the real part.txt product table."""
-    part = pd.read_csv(DATA / "part.txt", sep="\t")
+    part = pd.read_csv(_dir(archetype) / "part.txt", sep="\t")
     out = []
     for row in part.itertuples():
         m = re.search(r"\d+", row.ROUTEFILE)

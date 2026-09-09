@@ -42,7 +42,8 @@ def kingman_wait_time(ca2: float, cs2: float, m: int, mean_service_min: float, u
     return variability_term * utilization_term * (mean_service_min / max(m, 1))
 
 
-def station_utilization(route_ids, release_rate_per_min, ca2=1.0, cs2=0.25, station_overrides=None):
+def station_utilization(route_ids, release_rate_per_min, ca2=1.0, cs2=0.25, station_overrides=None,
+                         archetype="lvhm"):
     """For each station group touched by the given routes (equal release
     rate per route, in lots/min), compute real-topology-derived load,
     utilization, and Kingman queueing time -- flags the bottleneck.
@@ -50,12 +51,17 @@ def station_utilization(route_ids, release_rate_per_min, ca2=1.0, cs2=0.25, stat
     cs2 default of 0.25 reflects the benchmark's own processing-time spread
     (PTIME2 ~= 5% of PTIME => a tight, near-deterministic service process,
     consistent with automated fab tools); ca2=1.0 assumes Poisson-ish lot
-    releases (a conservative default; CONWIP release tightens this)."""
-    stations = fab_data.apply_station_overrides(fab_data.load_station_groups(), station_overrides)
+    releases (a conservative default; CONWIP release tightens this).
+
+    archetype selects which real SMT2020 fab configuration to use: "lvhm"
+    (Low-Volume-High-Mix, 10 real products, the default used throughout the
+    rest of this app) or "hvlm" (High-Volume-Low-Mix, 2 real products) --
+    see pipeline/archetype_comparison.py for why this matters."""
+    stations = fab_data.apply_station_overrides(fab_data.load_station_groups(archetype), station_overrides)
     load_min_per_min = {g: 0.0 for g in stations.index}
 
     for rid in route_ids:
-        steps = fab_data.load_route(rid)
+        steps = fab_data.load_route(rid, archetype)
         by_group = steps.groupby("stngrp")["mean_ptime_min"].sum()
         for g, total_min in by_group.items():
             if g in load_min_per_min:

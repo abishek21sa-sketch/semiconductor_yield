@@ -9,6 +9,7 @@ data/wm811k/LSWMD.pkl
 data/wm811k/wafer_cnn_model.pt
 data/wm811k/wafer_cnn_metrics.json
 data/wm811k/wafer_cnn_samples.json
+data/wm811k/wafer_baseline_metrics.json
 gurobi.lic
 fab_app.db
 frontend/node_modules/

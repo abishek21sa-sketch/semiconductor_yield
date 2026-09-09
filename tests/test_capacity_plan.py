@@ -52,3 +52,16 @@ def test_smaller_horizon_solves_fast():
     r = capacity_plan.solve_multi_period_plan(ROUTE_IDS, weeks=12, n_scenarios=5)
     assert r["status"] == "optimal"
     assert r["solve_time_sec"] < 30
+
+
+def test_yield_rate_below_one_never_improves_backlog():
+    """Real fab logic: netting out yield loss can only make the same raw
+    release plan look worse (more raw lots needed for the same real good
+    output), never better -- yield_rate=1.0 must reproduce the original
+    no-adjustment model exactly (same total_backlog_final_week)."""
+    baseline = capacity_plan.solve_multi_period_plan(ROUTE_IDS, weeks=8, n_scenarios=3, yield_rate=1.0)
+    yield_adjusted = capacity_plan.solve_multi_period_plan(ROUTE_IDS, weeks=8, n_scenarios=3, yield_rate=0.90)
+    assert baseline["status"] == yield_adjusted["status"] == "optimal"
+    assert yield_adjusted["total_backlog_final_week"] >= baseline["total_backlog_final_week"]
+    assert yield_adjusted["yield_rate"] == 0.90
+    assert baseline["yield_rate"] == 1.0

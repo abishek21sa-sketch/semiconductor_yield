@@ -17,9 +17,9 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
+from scipy.ndimage import zoom
 from torch.utils.data import DataLoader, Dataset
 
 from pipeline import wafer_data as wd
@@ -32,17 +32,36 @@ SAMPLES_PATH = ARTIFACT_DIR / "wafer_cnn_samples.json"
 
 class WaferMapDataset(Dataset):
     """Lazily resizes+encodes each real wafer map on access -- keeps peak
-    memory to one batch at a time instead of the whole dataset pre-resized."""
+    memory to one batch at a time instead of the whole dataset pre-resized.
 
-    def __init__(self, df):
+    augment=True applies a random 90-degree rotation and/or flip at train
+    time only. This is physically valid for a wafer map (a real wafer has
+    no inherent "up" -- its orientation on the map is an artifact of how
+    the prober happened to be indexed, not a real feature of the defect
+    pattern), unlike e.g. an arbitrary-angle rotation or a shear, which
+    would distort real spatial relationships. Applied on the already-
+    resized/encoded array, not the raw variable-size wafer map, so it's a
+    cheap grid operation."""
+
+    def __init__(self, df, augment=False):
         self.wafer_maps = df.waferMap.to_numpy()
         self.labels = np.array([wd.CLASS_TO_IDX[l] for l in df.label], dtype=np.int64)
+        self.augment = augment
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, i):
         x = wd.encode_wafer_map(self.wafer_maps[i])
+        if self.augment:
+            k = np.random.randint(4)
+            if k:
+                x = np.rot90(x, k, axes=(1, 2))
+            if np.random.rand() < 0.5:
+                x = np.flip(x, axis=1)
+            if np.random.rand() < 0.5:
+                x = np.flip(x, axis=2)
+            x = np.ascontiguousarray(x)
         return torch.from_numpy(x), int(self.labels[i])
 
 
@@ -114,12 +133,26 @@ def _evaluate(model, loader, device):
 
 
 def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, max_eval=None,
-                    max_none_train=25000, log=print, artifact_dir=None):
+                    max_none_train=25000, augment=True, log=print, artifact_dir=None):
     """Trains from scratch on the real labeled WM-811K data and writes
     <artifact_dir>/wafer_cnn_{model.pt,metrics.json,samples.json}.
     artifact_dir defaults to ARTIFACT_DIR (the real, served location) --
     smoke tests must pass a throwaway directory instead so they can never
     clobber a real trained model with a 1-epoch/2000-sample toy run.
+
+    augment defaults to True based on a real controlled result, not a
+    guess -- and not the first result I got either. An early single-run
+    comparison suggested rotation/flip augmentation hurt this model, but
+    that comparison was invalid: this function wasn't fully seeded (torch's
+    own RNG and augmentation's np.random calls were uncontrolled), so two
+    "identical" runs could land anywhere in a 70.8%-74.4% test macro-F1
+    band from random-init noise alone -- nowhere near enough to trust a
+    single-run A/B. After adding torch.manual_seed/np.random.seed above and
+    re-running scripts/train_wafer_cnn.py --ab-test with the same seed for
+    both arms, the real answer reversed: augment=True scored 69.8% test
+    macro-F1 / 93.2% accuracy vs augment=False's 69.0% / 88.7% at the same
+    seed -- a real, if modest, improvement, not the regression I'd
+    originally (wrongly) concluded.
 
     max_none_train subsamples ONLY the training split's dominant "none"
     class (real: 117,944 of 138,357 training examples) down to a smaller
@@ -133,6 +166,16 @@ def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, m
 
     max_train/max_eval cap the number of examples used (for a fast smoke
     test); leave unset for a real full run."""
+    # Full seeding, not just the data split: without this, PyTorch's weight
+    # init + DataLoader shuffling and (for augment=True) the augmentation's
+    # own np.random calls are all uncontrolled, so two runs that differ only
+    # in one setting (e.g. augment on/off) aren't actually a valid A/B
+    # comparison -- their gap could just as easily be random-init noise.
+    # Found this the hard way: four "identical" runs of this exact function
+    # produced test macro-F1 anywhere from 70.8% to 74.4%.
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     artifact_dir = Path(artifact_dir) if artifact_dir else ARTIFACT_DIR
     model_path = artifact_dir / "wafer_cnn_model.pt"
     metrics_path = artifact_dir / "wafer_cnn_metrics.json"
@@ -141,12 +184,7 @@ def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, m
     t0 = time.time()
     log("Loading real WM-811K labeled wafers...")
     labeled = wd.load_labeled_wafers()
-    train_df, val_df, test_df = wd.stratified_split(labeled, seed=seed)
-    if max_none_train:
-        none_rows = train_df[train_df.label == "none"]
-        if len(none_rows) > max_none_train:
-            keep_none = none_rows.sample(n=max_none_train, random_state=seed)
-            train_df = pd.concat([train_df[train_df.label != "none"], keep_none]).reset_index(drop=True)
+    train_df, val_df, test_df = wd.prepare_training_split(labeled, seed=seed, max_none_train=max_none_train)
     if max_train:
         train_df = train_df.sample(n=min(max_train, len(train_df)), random_state=seed).reset_index(drop=True)
     if max_eval:
@@ -155,7 +193,8 @@ def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, m
     log(f"train={len(train_df)} val={len(val_df)} test={len(test_df)} (loaded in {time.time()-t0:.1f}s)")
 
     device = torch.device("cpu")
-    train_ds, val_ds, test_ds = WaferMapDataset(train_df), WaferMapDataset(val_df), WaferMapDataset(test_df)
+    train_ds = WaferMapDataset(train_df, augment=augment)
+    val_ds, test_ds = WaferMapDataset(val_df), WaferMapDataset(test_df)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -206,6 +245,7 @@ def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, m
         "class_distribution": {c: int((labeled.label == c).sum()) for c in wd.CLASSES},
         "train_class_distribution": {c: int((train_df.label == c).sum()) for c in wd.CLASSES},
         "max_none_train": max_none_train,
+        "augment": augment,
         "training_history": history,
         "test_confusion_matrix": test_metrics["confusion_matrix"],
         "test_per_class": test_metrics["per_class"],
@@ -222,12 +262,47 @@ def train_and_save(epochs=6, batch_size=256, lr=1e-3, seed=13, max_train=None, m
     return metrics
 
 
-@torch.no_grad()
+def compute_gradcam(model, x, target_class):
+    """Grad-CAM (Selvaraju et al. 2017): which real pixels of this wafer map
+    most influenced the model's score for target_class. Hooks
+    model.features[10] -- the last conv block's post-ReLU activation, 16x16
+    -- rather than the final post-maxpool output (8x8, index 11), which is
+    too coarse to be a useful overlay on a wafer map. Requires grad, so
+    callers must not be inside a no_grad() context."""
+    activations, gradients = {}, {}
+
+    def fwd_hook(module, inp, out):
+        activations["v"] = out
+
+    def bwd_hook(module, grad_in, grad_out):
+        gradients["v"] = grad_out[0]
+
+    target_layer = model.features[10]
+    h1 = target_layer.register_forward_hook(fwd_hook)
+    h2 = target_layer.register_full_backward_hook(bwd_hook)
+    try:
+        model.zero_grad()
+        logits = model(x.unsqueeze(0))
+        logits[0, target_class].backward()
+        acts = activations["v"][0]     # (C, 16, 16)
+        grads = gradients["v"][0]      # (C, 16, 16)
+        weights = grads.mean(dim=(1, 2))
+        cam = torch.relu((weights[:, None, None] * acts).sum(dim=0))
+        cam_max = cam.max()
+        if cam_max > 0:
+            cam = cam / cam_max
+        return cam.detach().cpu().numpy()
+    finally:
+        h1.remove()
+        h2.remove()
+
+
 def _save_sample_gallery(model, test_df, device, samples_path, n_per_class=3, grid_size=32):
     """A handful of real test-set wafer maps per class, downsized to a small
     grid for the frontend to render directly (no image files needed) with
-    true vs. predicted label so a viewer can see real misclassifications,
-    not just aggregate numbers."""
+    true vs. predicted label plus a real Grad-CAM heatmap, so a viewer can
+    see real misclassifications AND what the model actually looked at, not
+    just aggregate numbers."""
     model.eval()
     samples = []
     for cls in wd.CLASSES:
@@ -237,14 +312,18 @@ def _save_sample_gallery(model, test_df, device, samples_path, n_per_class=3, gr
         rows = rows.sample(n=min(n_per_class, len(rows)), random_state=1)
         for _, row in rows.iterrows():
             enc = wd.encode_wafer_map(row.waferMap, size=grid_size)
-            model_input = wd.encode_wafer_map(row.waferMap, size=wd.WAFER_SIZE)
-            logits = model(torch.from_numpy(model_input).unsqueeze(0).to(device))
-            pred_idx = int(logits.argmax(dim=1).item())
+            model_input = torch.from_numpy(wd.encode_wafer_map(row.waferMap, size=wd.WAFER_SIZE)).to(device)
+            with torch.no_grad():
+                logits = model(model_input.unsqueeze(0))
+                pred_idx = int(logits.argmax(dim=1).item())
+            cam = compute_gradcam(model, model_input, pred_idx)  # 16x16, needs grad -- outside no_grad()
+            cam_resized = zoom(cam, (grid_size / cam.shape[0], grid_size / cam.shape[1]), order=1)
             grid = np.zeros((grid_size, grid_size), dtype=int)
             grid[enc[0] >= 1] = 1
             grid[enc[1] >= 1] = 2
             samples.append({
                 "true_label": cls,
+                "heatmap": [[round(float(v), 3) for v in row_] for row_ in cam_resized],
                 "predicted_label": wd.CLASSES[pred_idx],
                 "correct": wd.CLASSES[pred_idx] == cls,
                 "grid": grid.tolist(),
